@@ -25,6 +25,7 @@ require("default.hypr.qconsole")
 require("default.hypr.input")
 require("default.hypr.windows")
 require("default.hypr.dictation-backend")
+require("default.hypr.monitor-focus")
 
 -- Current theme overrides.
 require_optional.module("omarchy.current.theme.hyprland")
