@@ -2,6 +2,12 @@
 -- and doesn't put it back when the real one returns, so the session takes no
 -- keyboard input until you switch workspace by hand. Upstream considers this
 -- intended, see hyprwm/Hyprland discussion #15554.
+--
+-- Focus dispatches don't take while the session lock is held, and the idle lock
+-- is what powers the display down, so a restore attempted on the timer alone
+-- is usually lost. The snapshot stays pending until focus is seen to move, and
+-- omarchy-system-wake retries it through `hyprctl dispatch
+-- 'o.monitor_focus.restore()'` once the session is unlocked.
 
 local fallback_monitor = "FALLBACK"
 local restore_delay_ms = 500
@@ -11,6 +17,8 @@ local restore_generation = 0
 -- Ids, not objects. The objects don't survive the migration.
 local saved_workspace_id = nil
 local saved_window_address = nil
+-- What to put back after a FALLBACK round trip, until focus moves.
+local pending = nil
 
 -- A newer monitor event makes a pending restore stale.
 local function invalidate_pending()
@@ -80,12 +88,19 @@ local function restore_focus(workspace_id, window_address)
   end
 end
 
+local function restore_pending()
+  if pending then
+    restore_focus(pending.workspace_id, pending.window_address)
+  end
+end
+
 hl.on("monitor.removed", function(monitor)
   if monitor.name == fallback_monitor then
     return
   end
 
   invalidate_pending()
+  pending = nil
 
   -- Hyprland still reports the pre-lock window as active here.
   local window = focused_window()
@@ -113,10 +128,12 @@ hl.on("monitor.added", function(monitor)
   end
 
   went_headless = false
-  local workspace_id, window_address = saved_workspace_id, saved_window_address
+  if saved_workspace_id then
+    pending = { workspace_id = saved_workspace_id, window_address = saved_window_address }
+  end
   forget_saved()
 
-  if not workspace_id then
+  if not pending then
     return
   end
 
@@ -126,7 +143,26 @@ hl.on("monitor.added", function(monitor)
 
   hl.timer(function()
     if generation == restore_generation then
-      restore_focus(workspace_id, window_address)
+      restore_pending()
     end
   end, { timeout = restore_delay_ms, type = "oneshot" })
 end)
+
+-- Under the lock the restore emits nothing, so an event here means focus took,
+-- whether from the restore or from the user, and there is nothing left to do.
+hl.on("workspace.active", function()
+  pending = nil
+end)
+
+local M = {}
+
+-- Returns a function for hl.dispatch, so omarchy-system-wake can retry the
+-- restore after unlock with `hyprctl dispatch 'o.monitor_focus.restore()'`.
+-- Does nothing when no round trip is pending.
+function M.restore()
+  return restore_pending
+end
+
+o.monitor_focus = M
+
+return M

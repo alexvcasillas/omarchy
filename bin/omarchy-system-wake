@@ -8,3 +8,7 @@
 omarchy-brightness-display on
 omarchy-brightness-keyboard restore
 omarchy-hyprland-monitor-clamshell >/dev/null 2>&1 || true
+
+# Put focus back if the display dropped onto FALLBACK while it was off. It is a
+# no-op otherwise, and while the session is still locked.
+hyprctl dispatch 'o.monitor_focus.restore()' >/dev/null 2>&1 || true
